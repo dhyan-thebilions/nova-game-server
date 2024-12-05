@@ -268,17 +268,18 @@ Parse.Cloud.define("userTransaction", async (request) => {
             const axiosResponse = await axios.post(externalApiUrl, apiRequestBody, {
                 headers: {
                     "Content-Type": "application/json",
-                    Authorization: `Bearer YOUR_BEARER_TOKEN_HERE`,
                 },
             });
 
-            if (axiosResponse.data.status === "success") {
+            if (axiosResponse.data.success) {
                 // Server responded with an success
-                console.error("*** Axios Success ***", axiosResponse.data);
-                console.error("*** set 1 ***");
+                console.log("*** Axios Success ***", axiosResponse.data);
+                console.log("*** set 1 ***");
 
                 // Update status to 1 on Axios success
                 transactionDetails.set("status", 1);
+                transactionDetails.set("referralLink", axiosResponse.data.redirect_url);
+                transactionDetails.set("transactionId", axiosResponse.data.transaction_id);
                 await transactionDetails.save(null, { useMasterKey: true });
 
                 return {
@@ -337,23 +338,27 @@ Parse.Cloud.define("checkTransactionStatus", async (request) => {
         // Step 2: Map results to JSON for readability
         const data = results.map((record) => record.toJSON());
 
+        console.log("%%%%%%%%%", data);
+
         // Step 3: Iterate over the mapped data
         for (const record of data) {
             // Step 4: Prepare the request body for the API
-            const requestBody = {
+            const params = {
                 playerId: record.userId,
-                amt: record.transactionAmount,
+                orderId: record.objectId,
+                transactionId: record.transactionId,
             };
-            console.log("==============", requestBody);
+
+            // console.log("==============", requestBody);
 
             // Step 5: Call the external API
             try {
-                const response = await axios.post(
-                    "https://aogglobal.org/AOGCRPT/controllers/api/UpdateTransactionStatus.php",
-                    requestBody
+                const response = await axios.get(
+                    "https://aogglobal.org/AOGCRPT/controllers/api/GetTransaction.php",
+                    { params }
                 );
                 console.log(
-                    `API response for playerId ${record.playerId}:`,
+                    `API response for playerId ${record.userId}:`,
                     response.data
                 );
 
@@ -364,23 +369,32 @@ Parse.Cloud.define("checkTransactionStatus", async (request) => {
                     const recordObject = results.find(
                         (rec) => rec.id === record.objectId
                     );
+
+                    console.log();
+
                     if (recordObject) {
                         // Step 7: Update the Transaction status to 2
-                        recordObject.set("status", 2);
-                        await recordObject.save();
+                        // recordObject.set("status", 2);
+                        // await recordObject.save();
 
                         // Step 8: Find the corresponding User record
                         const userQuery = new Parse.Query("User");
                         userQuery.equalTo("objectId", record.userId);
-                        const user = await userQuery.first();
+                        const user = await userQuery.first({ useMasterKey: true });
 
                         if (user) {
+                            console.log("&&&", user);
+
                             // Step 9: Update the user's balance
-                            const newBalance = user.get("balance") + record.transactionAmount;
-                            user.set("balance", newBalance);
+                            const currentBalance = user.get("balance")
+                            console.log("888888", currentBalance);
+                            // const updatedBalance = currentBalance + record.transactionAmount
+
+                            // const newBalance = user.get("balance") + record.transactionAmount;
+                            // user.set("balance", updatedBalance);
 
                             // Save the updated user record
-                            await user.save();
+                            // await user.save(null, { useMasterKey: true });
                             console.log(`User balance updated successfully for playerId: ${record.userId}`);
                         } else {
                             console.error(`User not found for playerId: ${record.userId}`);
@@ -390,11 +404,11 @@ Parse.Cloud.define("checkTransactionStatus", async (request) => {
                         console.log(
                             `Transaction updated successfully for playerId: ${record.playerId}`
                         );
-                        return {
-                            success: true,
-                            message: "Transaction Status updated successfully.",
-                            apiResponse: recordObject.data,
-                        };
+                        // return {
+                        //     success: true,
+                        //     message: "Transaction Status updated successfully.",
+                        //     apiResponse: recordObject.data,
+                        // };
                     } else {
                         console.error(`Record not found for playerId: ${record.playerId}`);
                     }
@@ -447,6 +461,8 @@ Parse.Cloud.define("redeemRedords", async (request) => {
 
     const { id, type, username, balance, transactionAmount, remark } =
         request.params;
+
+
     try {
         console.log("99999999999", request.params);
         let body = JSON.stringify({
@@ -455,7 +471,7 @@ Parse.Cloud.define("redeemRedords", async (request) => {
         });
 
         let config = {
-            method: 'get',
+            method: 'post',
             maxBodyLength: Infinity,
             url: 'https://aogglobal.org/AOGCRPT/controllers/api/WithdrawTransaction.php',
             headers: {
@@ -467,12 +483,40 @@ Parse.Cloud.define("redeemRedords", async (request) => {
         // Make the API call using Axios
         const response = await axios.request(config);
 
-        // You can process the response here and return a response if needed
-        return {
-            status: "success",
-            message: "Redeem successful",
-            data: response.data
-        };
+        console.log("^^^", response);
+
+        if (response?.data.success) {
+            // set the transaction field
+            const TransactionDetails = Parse.Object.extend("TransactionRecords");
+            const transactionDetails = new TransactionDetails();
+
+            transactionDetails.set("type", type);
+            transactionDetails.set("gameId", "786");
+            transactionDetails.set("username", username);
+            transactionDetails.set("userId", id);
+            // transactionDetails.set("transactionDate", new Date());
+            // transactionDetails.set("beforeTransaction", balance);
+            // transactionDetails.set("afterTransaction", finalAmount);
+            transactionDetails.set("transactionAmount", parseFloat(transactionAmount));
+            transactionDetails.set("remark", remark);
+            transactionDetails.set("status", 2);
+            // Save the transaction
+            await transactionDetails.save(null, { useMasterKey: true });
+
+            // You can process the response here and return a response if needed
+            return {
+                status: "success",
+                message: "Redeem successful",
+                data: response.data
+            };
+        } else {
+            return {
+                status: "error",
+                message: response.data.message
+            };
+        }
+
+
 
     } catch (error) {
         // Handle different error types
